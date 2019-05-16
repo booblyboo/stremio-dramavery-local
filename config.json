@@ -1,0 +1,7 @@
+{
+  "host": {
+    "title": "Host",
+    "type": "string",
+    "default": "https://dramavery.com/"
+  }
+}
