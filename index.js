@@ -12,7 +12,7 @@ const defaults = {
 	name: 'Drama Very',
 	prefix: 'dramavery_',
 	origin: '',
-	endpoint: 'https://dramavery.com',
+	endpoint: 'https://asianrun.com',
 	icon: 'https://www.viewasian.tv/themes/ViewAsian/images/logo.png',
 	categories: []
 }
@@ -223,10 +223,11 @@ async function retrieveRouter() {
 							        let secondUrl = false
 
 									page.on('onResourceRequested', function(req, netReq) {
-										if (!kVid && (req.url.includes('/streaming.php') || req.url.includes('/embed.php'))) {
+										if (!kVid && (req.url.includes('/streaming.php') || req.url.includes('/embed.php') || req.url.includes('/ajax.php'))) {
 											kVid = req.url
 										} else if (!secondUrl && req.url.includes('player?url=')) {
-											secondUrl = req.url
+											// this case seems to have been removed
+//											secondUrl = req.url
 										}
 									})
 							        page.open(iframeHref).then(async (status, body) => {
@@ -261,67 +262,53 @@ async function retrieveRouter() {
 
 							}
 						    getKvid(nextIframe => {
-						    	if (nextIframe)
-									needle.get(nextIframe, { headers }, (err, resp, body) => {
+						    	if (nextIframe) {
+					    			const newHeaders = {
+					    				'referer': 'https://embed.watchasian.to/',
+					    				'sec-fetch-dest': 'empty',
+										'sec-fetch-mode': 'cors',
+										'sec-fetch-site': 'same-origin',
+										'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.132 Safari/537.36',
+										'x-requested-with': 'XMLHttpRequest',
+									}
+									needle.get(nextIframe, { headers: newHeaders }, (err, resp, body) => {
 										if (!err && body) {
-											const $ = cheerio.load(body)
-											let streams = []
-											const matches = body.match(/sources:[^\n]*/gm)
-											const directSources = []
-											matches.forEach(el => {
-												let obj
-												try {
-													obj = JSON.parse(el.replace('sources:', '').slice(0, -1).split('file:').join('"file":').split('label:').join('"label":').split("'").join('"'))
-												} catch(e) {}
-												if (obj && Array.isArray(obj))
-													obj.forEach(objEl => {
-														if (objEl.file && directSources.indexOf(objEl.file) == -1) {
-															directSources.push(objEl.file)
-															streams.push({
-																name: objEl.file.includes('redirector.googlevideo.com') ? 'Google Video' : 'Standard Server',
-																title: objEl.label,
-																url: proxy.addProxy(objEl.file, { headers: { referer: nextIframe, origin: 'https://k-vid.net' } })
-															})
+
+											let respObj
+											try {
+												respObj = JSON.parse(body)
+											} catch(e) {}
+
+											if (((respObj || {}).source || []).length) {
+												const streams = []
+												let streamCount = 0
+												respObj.source.concat(respObj.source_bk || []).forEach(el => {
+													if (el.file && !streams.includes(el.file)) {
+														let label = el.label
+														if (label.toLowerCase().includes('hls p')) {
+															streamCount++
+															label = 'HLS'
+															if (streamCount > 1)
+																label += ' ' + streamCount
 														}
-													})
-											})
-											if ($('li.linkserver').length) {
-												const parallelObj = {}
-												$('li.linkserver').each((ij, el) => {
-													let videoUrl = $(el).attr('data-video')
-													if (videoUrl) {
-														if (videoUrl.startsWith('//'))
-															videoUrl = 'https:' + videoUrl
-														const task = { name: $(el).text().trim(), title: 'External URL', externalUrl: videoUrl }
-														// xstreamcdn, kvid, rapidvideo, mp4upload, openload, streamango
-														parallelObj[videoUrl] = cb => {
-															const extract = async () => {
-																const scraped = await scrape({ url: task.externalUrl })
-																if ((scraped || {}).url && !scraped.external) {
-																	task.url = scraped.url
-																	delete task.externalUrl
-																	task.title = scraped.resolution || 'Stream'
-																	streams.push(task)
-																} else
-																	streams.push(task)
-																cb()
-															}
-															extract()
-														}
+														streams.push({
+															name: el.file.includes('redirector.googlevideo.com') ? 'Google Video' : 'Standard Server',
+															title: label,
+															url: proxy.addProxy(el.file, { headers: { referer: nextIframe, origin: 'https://k-vid.net' } })
+														})
 													}
 												})
-												async.parallel(parallelObj, (err, results) => {
-													if (streams.length)
-														resolve({ streams })
-													else
-														reject(defaults.name + ' - Did not find any videos for request')
-												})
+												if (streams.length)
+													resolve({ streams })
+												else
+													reject(defaults.name + ' - Did not find any videos for request')
+
 											} else
-												resolve({ streams })
+												reject(defaults.name + ' - Could not parse json for streams')
 										} else
 											reject(defaults.name + ' - Unexpected second iframe response')
 									})
-						    	else {
+						    	} else {
 						    		reject(defaults.name + ' - Could not get second iframe url')
 						    	}
 						    })
